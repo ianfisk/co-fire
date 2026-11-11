@@ -1,0 +1,6 @@
+apache-sedona
+jupyter>=1.0.0
+geotessera>=0.11.0
+matplotlib>=3.8.0
+numpy>=2.0.0
+rasterio>=1.5.0
