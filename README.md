@@ -8,6 +8,9 @@
 	source .venv/bin/activate
 	pip install -r requirements.txt
 	```
+
+	(You might need to unload any active modules.)
+
 1. When running Jupyter notebooks, I recommend starting a kernel in tmux then attaching VSCode to it:
 	- `tmux new -s co-fire` or `tmux a -t co-fire`
 	- Then, in tmux:
