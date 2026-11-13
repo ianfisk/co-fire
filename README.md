@@ -4,12 +4,13 @@
 
 1. Create the environment (or `source` if already created).
 	```bash
+	module unload courses/cs435
 	python -m venv .venv
 	source .venv/bin/activate
 	pip install -r requirements.txt
 	```
 
-	(You might need to unload any active modules.)
+	Any loaded python modules will interfere with pip installing in the venv.
 
 1. When running Jupyter notebooks, I recommend starting a kernel in tmux then attaching VSCode to it:
 	- `tmux new -s co-fire` or `tmux a -t co-fire`
