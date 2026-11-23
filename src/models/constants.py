@@ -1,0 +1,2 @@
+SEED = 41
+TILE_SIZE = 256
