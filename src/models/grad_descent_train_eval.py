@@ -35,9 +35,7 @@ def train_epoch(
     model.train()
     total_loss = 0.0   # sum of per-example losses
     total_examples = 0
-    for batch in train_loader:
-        X, y = batch[0], batch[1]  # Work with TensorDataset or RandomizedChannelDataset
-
+    for X, y in train_loader:
         # Typical training workflow: Dataset/loader are on the CPU.
         # Just load one batch to the GPU.
         X, y = X.to(device), y.to(device)
@@ -47,7 +45,6 @@ def train_epoch(
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        # scheduler.step()
 
         # loss_fn returns the mean over the batch, so multiply back out by the
         # batch size to accumulate an exact, example-weighted average (the final
@@ -61,23 +58,15 @@ def train_epoch(
 def evaluate(
         model: nn.Module,
         data_loader: DataLoader[TensorDataset],
-        loss_fn: nn.Module,
-        channel_chunk_size=96) -> float:
-    # channel_chunk_size: Take small windows of channels to avoid running out of memory
-    # on the GPU. This works with a validation/test dataloader that does not do any
-    # windowing of channels (a plain TensorDataset), or one that is already windowing
-    # RandomizedChannelDataset (in which case splitting here may only yield one item).
+        loss_fn: nn.Module) -> float:
     model.eval()
     total_loss = 0.0
     count = 0
     with torch.no_grad():
-        for batch in data_loader:  # (batch_size, channels, time_window_size)
-            X, y = batch[0], batch[1]  # Work with TensorDataset or RandomizedChannelDataset
-
-            for Xc, yc in zip(X.split(channel_chunk_size, dim=1), y.split(channel_chunk_size, dim=1)):
-                Xc, yc = Xc.to(device), yc.to(device)
-                total_loss += loss_fn(model(Xc), yc).item() * yc.numel()
-                count += yc.numel()
+        for X, y in data_loader:
+            X, y = X.to(device), y.to(device)
+            total_loss += loss_fn(model(X), y).item() * y.numel()
+            count += y.numel()
     return total_loss / count
 
 
@@ -88,11 +77,11 @@ def train_early_stopping(
         loss_fn,
         optimizer,
         epochs,
+        patience = 5,  # number of epochs to wait for an improvement
         verbosity: Literal[0]|Literal[1]|Literal[2] = 0
 ) -> tuple[list[float], list[float]]:
     best_val_loss = float('inf')
     patience_counter = 0
-    patience = 10          # number of epochs to wait for an improvement
     best_state = None
 
     train_losses, valid_losses = [], []
@@ -182,6 +171,7 @@ class ExperimentRunner:
 
         self.epochs: int = -1
         self.lr: float = 0.001
+        self.patience = 5
         self.loss_fn = nn.CrossEntropyLoss()
         self.train_loader = None
         self.val_loader = None
@@ -192,6 +182,10 @@ class ExperimentRunner:
 
     def with_lr(self, lr: float) -> ExperimentRunner:
         self.lr = lr
+        return self
+
+    def with_patience(self, patience: float) -> ExperimentRunner:
+        self.patience = patience
         return self
 
     def with_loss_fn(self, loss_fn: nn.Module) -> ExperimentRunner:
@@ -237,6 +231,7 @@ class ExperimentRunner:
                 loss_fn=self.loss_fn,
                 optimizer=optimizer,
                 epochs=self.epochs,
+                patience=self.patience,
                 verbosity=verbosity)
             self.experiment_results.append(ExperimentRunner.ExpResults(
                 params=params,
