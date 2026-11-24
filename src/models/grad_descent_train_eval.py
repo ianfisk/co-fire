@@ -4,9 +4,10 @@ import numpy as np
 import pandas as pd
 import time
 import torch
-from torch import nn, Tensor
-from torch.utils.data import DataLoader, TensorDataset, Dataset
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 from typing import Literal, Callable, NamedTuple
+from constants import CE_LOSS_IGNORE_INDEX
 
 # render figures as crisp vector graphics
 try:
@@ -55,19 +56,28 @@ def train_epoch(
     return total_loss / total_examples
 
 
+def correctly_classified(y_hat, y):
+    """Return the number of correct predictions in a batch."""
+    y_hat = y_hat.argmax(dim=1)  # Logits -> one predicted class
+    return (y_hat == y).type(torch.float32).sum().item()
+
+
 def evaluate(
         model: nn.Module,
         data_loader: DataLoader[TensorDataset],
-        loss_fn: nn.Module) -> float:
+        loss_fn: nn.Module) -> tuple[float, float]:
     model.eval()
     total_loss = 0.0
+    correct = 0.0
     count = 0
     with torch.no_grad():
         for X, y in data_loader:
             X, y = X.to(device), y.to(device)
-            total_loss += loss_fn(model(X), y).item() * y.numel()
+            y_pred = model(X)
+            total_loss += loss_fn(y_pred, y).item() * y.numel()
+            correct += correctly_classified(y_pred, y)
             count += y.numel()
-    return total_loss / count
+    return correct / count, total_loss / count
 
 
 def train_early_stopping(
@@ -79,12 +89,12 @@ def train_early_stopping(
         epochs,
         patience = 5,  # number of epochs to wait for an improvement
         verbosity: Literal[0]|Literal[1]|Literal[2] = 0
-) -> tuple[list[float], list[float]]:
+) -> tuple[list[float], list[float], list[float]]:
     best_val_loss = float('inf')
     patience_counter = 0
     best_state = None
 
-    train_losses, valid_losses = [], []
+    train_losses, valid_losses, valid_accuracies = [], [], []
     for epoch in range(epochs):
         start = time.time()
         train_loss = train_epoch(model, train_loader, loss_fn, optimizer)
@@ -92,17 +102,18 @@ def train_early_stopping(
             print(f'  train time {time.time() - start:.0f}s')
 
         eval_start = time.time()
-        val_loss = evaluate(model, valid_loader, loss_fn)
+        val_accuracy, val_loss = evaluate(model, valid_loader, loss_fn)
         if verbosity > 1:
             print(f'  eval time {time.time() - eval_start:.0f}s')
 
         if verbosity > 0:
             print(f'epoch {epoch + 1:2d}  train loss {train_loss:.3f}  '
-                f'val loss {val_loss:.3f}  '
+                f'val loss {val_loss:.3f}  val acc {val_accuracy:.3f}  '
                 f'({time.time() - start:.0f}s)')
 
         train_losses.append(train_loss)
         valid_losses.append(val_loss)
+        valid_accuracies.append(val_accuracy)
 
         if val_loss < best_val_loss:
             # still improving: remember this model as the best so far
@@ -122,12 +133,13 @@ def train_early_stopping(
     if best_state:
         model.load_state_dict(best_state)
 
-    return train_losses, valid_losses
+    return train_losses, valid_losses, valid_accuracies
 
 
 def plot_loss(
     train_losses: list[float],
     val_losses: list[float],
+    val_accuracies: list[float],
     title: str = ""
 ):
     epochs_axis = range(1, len(train_losses) + 1)
@@ -138,7 +150,12 @@ def plot_loss(
     ax_loss.set_xlabel('epoch')
     ax_loss.set_ylabel('loss')
 
-    lines = l1 + l2
+    ax_acc = ax_loss.twinx()
+    l3 = ax_acc.plot(epochs_axis, val_accuracies, label='validation accuracy',
+                    color='tab:green', ls=':')
+    ax_acc.set_ylabel('accuracy')
+
+    lines = l1 + l2 + l3
     ax_loss.legend(lines, [ln.get_label() for ln in lines], bbox_to_anchor=(1.3, 1), loc='upper left')
     plt.title(title)
 
@@ -172,7 +189,7 @@ class ExperimentRunner:
         self.epochs: int = -1
         self.lr: float = 0.001
         self.patience = 5
-        self.loss_fn = nn.CrossEntropyLoss()
+        self.loss_fn = nn.CrossEntropyLoss(ignore_index=CE_LOSS_IGNORE_INDEX)
         self.train_loader = None
         self.val_loader = None
 
@@ -224,7 +241,7 @@ class ExperimentRunner:
             model = self.model_constr(params).to(device)
             optimizer = torch.optim.SGD(model.parameters(), lr=self.lr)
 
-            train_losses, val_losses = train_early_stopping(
+            train_losses, val_losses, val_accuracies = train_early_stopping(
                 model,
                 self.train_loader,
                 self.val_loader,
@@ -242,6 +259,7 @@ class ExperimentRunner:
                 plot_loss(
                     train_losses=train_losses,
                     val_losses=val_losses,
+                    val_accuracies=val_accuracies,
                     title=plot_name,
                 )
 
