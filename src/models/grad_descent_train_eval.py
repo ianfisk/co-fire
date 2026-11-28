@@ -167,7 +167,7 @@ class ExperimentRunner:
     Averaged results are returned in a dataframe after evaluating the models against
     the validation set. Plotting some/all of the experiments is also possible.
     """
-    REPORT_COLUMNS = ["Classifier", "Loss (val)", "Epochs", "Param count"]
+    REPORT_COLUMNS = ["Classifier", "Loss (val)", "Acc (val)", "Epochs", "Param count"]
 
     # Results used in plots, saved in case we want to recall results from this
     # runner without re-running all experiments.
@@ -176,6 +176,7 @@ class ExperimentRunner:
         model: nn.Module
         train_losses: list[float]
         val_losses: list[float]
+        val_accuracies: list[float]
 
     def __init__(self, model_constr: Callable[[NamedTuple], nn.Module]):
         self.model_constr = model_constr
@@ -201,7 +202,7 @@ class ExperimentRunner:
         self.lr = lr
         return self
 
-    def with_patience(self, patience: float) -> ExperimentRunner:
+    def with_patience(self, patience: int) -> ExperimentRunner:
         self.patience = patience
         return self
 
@@ -254,7 +255,8 @@ class ExperimentRunner:
                 params=params,
                 model=model.cpu(),
                 train_losses=train_losses,
-                val_losses=val_losses))
+                val_losses=val_losses,
+                val_accuracies=val_accuracies))
             if plot_name:
                 plot_loss(
                     train_losses=train_losses,
@@ -265,7 +267,9 @@ class ExperimentRunner:
 
             param_count = sum(p.numel() for p in model.parameters() if p.requires_grad)
             actual_epochs = len(train_losses)
-            run_data.append([serialized_params, min(val_losses), actual_epochs, param_count])
+            min_loss = min(val_losses)
+            associated_acc = val_accuracies[val_losses.index(min_loss)]
+            run_data.append([serialized_params, min_loss, associated_acc, actual_epochs, param_count])
 
         df = pd.DataFrame(
             run_data,
